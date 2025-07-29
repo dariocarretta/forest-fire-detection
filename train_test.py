@@ -1,7 +1,7 @@
 import torch 
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
-from unet import UNet
+from models.unet import UNet
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
