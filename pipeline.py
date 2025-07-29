@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import matplotlib.pyplot as plt
-from bands_preprocessing import *
+from utils.bands_preprocessing import *
 from clouddetection import *
 
 
