@@ -87,6 +87,8 @@ def resampling_bands(bands_data, reference_profile, target_resolution):
 
     return result
 
+#--------------------------------------------------------------------------------
+
 # read data from folders
 def read_sent2_1c_bands(base_path: str, 
                         band_list:list=['B01', 'B02', 'B03', 'B4', 'B05', 'B06', 'B07', 
@@ -249,10 +251,130 @@ def save_data_profile(bands_data, path:str, name:str):
 
 #--------------------------------------------------------------------------------
 
+# extract the dNBR map (of values between 0 and 1) and the dNBR binary map
+def extract_data_labels_from_bands(pre_bands_data, post_bands_data, output_dir: str, thresh: float = 0.6, masking: bool = True):
+    """
+    Create data labels from Sentinel-2 images by considering the dNBR value (with NDVI masking)
+    
+    Args:
+        img_list: List of paths to Sentinel-2 Level 1C product directories [pre-fire, post-fire]
+        output_dir: Location where to save the results
+        thresh: threshold of dNBR values to use to create binary map
+        masking: bool param to determine whether to mask to 0 pixels that are not vegetation, using ndvi
+            or not to do it (as these will be later discarded)
+
+    Returns:
+        numpy.ndarray: dNBR normalized image with shape (height, width, 1)
+    """
+    
+    nbr_imgs = {}
+    ndvi_imgs = {}
+    
+    # Process both datasets
+    for i, bands_data in enumerate([pre_bands_data, post_bands_data]):
+        band_order = bands_data['band_order']
+        
+        # Find B09 (NIR), B12 (SWIR)
+        try:
+            b09_idx = next(idx for idx, name in band_order.items() if name == 'B09')
+            b12_idx = next(idx for idx, name in band_order.items() if name == 'B12')
+            # if applying masking, find indices for ndvi
+            if masking:
+                b04_idx = next(idx for idx, name in band_order.items() if name == 'B04')
+                b08_idx = next(idx for idx, name in band_order.items() if name == 'B08')
+        except StopIteration:
+            raise ValueError("Some bands not found in the provided bands data")
+        
+        b09_data = bands_data['data'][:, :, b09_idx]
+        b12_data = bands_data['data'][:, :, b12_idx]
+
+        # Calculate NBR
+        denom_nbr = b09_data + b12_data
+        denom_nbr[denom_nbr == 0] = 1e-6
+        nbr_img = (b09_data - b12_data) / denom_nbr
+        nbr_imgs[i] = nbr_img
+
+        if masking:
+            b08_data = bands_data['data'][:, :, b08_idx]
+            b04_data = bands_data['data'][:, :, b04_idx]
+            # Calculate NDVI
+            denom_ndvi = b08_data + b04_data
+            denom_ndvi[denom_ndvi == 0] = 1e-6
+            ndvi_img = (b08_data - b04_data) / denom_ndvi
+            ndvi_imgs[i] = ndvi_img
+
+        
+    # get final dnbr image
+    dnbr_img = nbr_imgs[0] - nbr_imgs[1]
+    
+    # normalize between 0 and 1 to get heatmap of probabilities (?)
+    dnbr_img = (dnbr_img - np.min(dnbr_img)) / (np.max(dnbr_img) - np.min(dnbr_img))
+
+    # Apply NDVI masking: set dNBR to 0 where pre-fire NDVI < 0.2 or NDVI > 0.7
+    if masking:
+        dnbr_img[ndvi_imgs[0] < 0.2] = 0
+        dnbr_img[ndvi_imgs[0] > 0.7] = 0
+        
+    # Add channel dimension to make it 3D (height, width, 1)
+    dnbr_img = dnbr_img[:, :, np.newaxis]
+
+    # get also the binary map if needed, with a threshold
+    dnbr_map = np.where(dnbr_img > thresh, 1, 0)
+
+    # save this data
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save as numpy files
+    np.save(os.path.join(output_dir, 'dnbr_normalized.npy'), dnbr_img)
+    np.save(os.path.join(output_dir, 'dnbr_binary_map.npy'), dnbr_map)
+
+    print("Data saved successfully!")
+    print(f"Files saved in '{output_dir}' directory:")
+    print("- dnbr_normalized.npy (NumPy array)")
+    print("- dnbr_binary_map.npy (NumPy array)")
+
+    return dnbr_img
+
+#--------------------------------------------------------------------------------
+
+# extract the single tiles of dim 256x256 (or whatever needed) from the large image
+def extract_tiles_with_padding(image, name, tile_size, path):
+    """
+    Extract tiles using padding strategy to ensure complete coverage.
+    
+    Args:
+        image: Input image (H, W, C)
+        name: The name of the location of the image (needed for data organizational purposes)
+        tile_size: Size of each tile (height, width, channels)
+        path: Location where to save tiles
+    """
+    os.makedirs(path, exist_ok=True)
+
+    h, w, c = image.shape
+    ph, pw, pc = tile_size
+    
+    # Calculate padding needed
+    pad_h = (ph - (h % ph)) % ph
+    pad_w = (pw - (w % pw)) % pw
+    
+    # Pad with reflection to maintain natural patterns
+    padded_image = np.pad(image, ((0, pad_h), (0, pad_w), (0, 0)), mode='reflect')
+    
+    # Extract non-overlapping tiles
+    padded_h, padded_w, _ = padded_image.shape
+    for i in range(0, padded_h, ph):
+        for j in range(0, padded_w, pw):
+            tile = padded_image[i:i+ph, j:j+pw, :]
+            np.save(os.path.join(path, f'{name}_tile_{(i, j)}'), tile)
+
+    print("All tileed extracted correctly!")
+
+#--------------------------------------------------------------------------------
+
 # unified function to compute vegetation indices from single .npy tile file and add as new channels
 def compute_veg_indices(tile_path: str, band_names: list, indices: list = ['ndvi', 'ndmi']):
     """
-    Compute vegetation indices (NDVI and/or NDMI) from a single .npy tile file and add them as new channels
+    Compute vegetation indices (NDVI and/or NDMI) from a single .npy tile file, add them as new channels, and save
     
     Args:
         tile_path (str): Path to the .npy tile file
@@ -309,482 +431,51 @@ def compute_veg_indices(tile_path: str, band_names: list, indices: list = ['ndvi
 
     del tile_data # free up ram space
     
+    # save expanded tile (overwriting original)
+    np.save(tile_path, expanded_tile)
+    
     return expanded_tile, updated_band_names
 
-
-def save_tile(tile_path: str, band_names: list, output_dir: str, indices: list = ['ndvi', 'ndmi']):
-    """
-    Compute vegetation indices and save expanded tile with indices as additional channels
-    
-    Args:
-        tile_path (str): Path to the input .npy tile file
-        band_names (list): List of band names in order
-        output_dir (str): Directory to save the expanded tile
-        indices (list): List of indices to compute ('ndvi' and/or 'ndmi')
-    
-    Returns:
-        str: Path to the saved expanded tile file
-        list: Updated band names including the new indices
-    """
-    # Compute expanded tile with vegetation indices
-    expanded_tile, updated_band_names = compute_veg_indices(tile_path, band_names, indices)
-    
-    # Create output directory if it doesn't exist
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Generate output filename based on input filename
-    input_filename = os.path.basename(tile_path)
-    output_filename = input_filename.replace('.npy', '_with_indices.npy')
-    output_path = os.path.join(output_dir, output_filename)
-    
-    # Save expanded tile
-    np.save(output_path, expanded_tile)
-    
-    # Save updated band information
-    band_info_path = output_path.replace('.npy', '_band_info.pkl')
-    band_info = {
-        'band_names': updated_band_names,
-        'band_order': {i: name for i, name in enumerate(updated_band_names)},
-        'original_bands': len(band_names),
-        'added_indices': [idx for idx in indices if idx.upper() in updated_band_names]
-    }
-    
-    with open(band_info_path, 'wb') as f:
-        pickle.dump(band_info, f)
-    
-    return output_path, updated_band_names
-
-
-
 #--------------------------------------------------------------------------------
 
-# extract the single tilees of dim 256x256 (or whatever needed) from the large image
-def extract_tilees_with_padding(image, name, tile_size, path):
-    """
-    Extract tilees using padding strategy to ensure complete coverage.
-    
-    Args:
-        image: Input image (H, W, C)
-        name: The name of the location of the image (needed for data organizational purposes)
-        tile_size: Size of each tile (height, width, channels)
-        path: Location where to save tilees
-    """
-    os.makedirs(path, exist_ok=True)
-
-    h, w, c = image.shape
-    ph, pw, pc = tile_size
-    
-    # Calculate padding needed
-    pad_h = (ph - (h % ph)) % ph
-    pad_w = (pw - (w % pw)) % pw
-    
-    # Pad with reflection to maintain natural patterns
-    padded_image = np.pad(image, ((0, pad_h), (0, pad_w), (0, 0)), mode='reflect')
-    
-    # Extract non-overlapping tilees
-    padded_h, padded_w, _ = padded_image.shape
-    for i in range(0, padded_h, ph):
-        for j in range(0, padded_w, pw):
-            tile = padded_image[i:i+ph, j:j+pw, :]
-            np.save(os.path.join(path, f'{name}_tile_{(i, j)}'), tile)
-
-    print("All tileed extracted correctly!")
-
-
-#--------------------------------------------------------------------------------
-
-# extract the dNBR map (of values between 0 and 1) and the dNBR binary map
-def extract_data_labels_from_bands(pre_bands_data, post_bands_data, output_dir: str, thresh: float = 0.6):
-    """
-    Create data labels from pre-extracted bands data by considering the dNBR value
-    
-    Args:
-        pre_bands_data: Dictionary from read_sentinel2_bands for pre-fire data
-        post_bands_data: Dictionary from read_sentinel2_bands for post-fire data
-        output_dir: Location where to save the results
-        thresh: threshold of dNBR values to use to create binary map
-    """
-    
-    nbr_imgs = {}
-    
-    # Process both datasets
-    for i, bands_data in enumerate([pre_bands_data, post_bands_data]):
-        band_order = bands_data['band_order']
-        
-        # Find B08 (NIR) and B12 (SWIR) indices
-        try:
-            b08_idx = next(i for i, name in band_order.items() if name == 'B08')
-            b12_idx = next(i for i, name in band_order.items() if name == 'B12')
-        except StopIteration:
-            raise ValueError("B08 (NIR) or B12 (SWIR) bands not found in the provided bands data")
-        
-        b08_data = bands_data['data'][:, :, b08_idx]
-        b12_data = bands_data['data'][:, :, b12_idx]
-
-        denom = b08_data + b12_data
-        denom[denom == 0] = 1e-6
-        # avoid division by zero
-        nbr_img = (b08_data - b12_data) / denom
-
-        nbr_imgs[i] = nbr_img
-
-    # get final dnbr image
-    dnbr_img = nbr_imgs[0] - nbr_imgs[1]
-    
-    # normalize between 0 and 1 to get heatmap of probabilities (?)
-    dnbr_img = (dnbr_img - np.min(dnbr_img)) / (np.max(dnbr_img) - np.min(dnbr_img))
-
-    # Apply NBR masking: set dNBR to 0 where pre-fire 0.7 < NBR < 0.2 (vegetation which is not very humid, so more prone to fires)
-    dnbr_img[nbr_imgs[0] < 0.2] = 0
-    dnbr_img[nbr_imgs[0] > 0.7] = 0
-    
-    # Add channel dimension to make it 3D (height, width, 1)
-    dnbr_img = dnbr_img[:, :, np.newaxis]
-
-    # get also the binary map if needed, with a threshold
-    dnbr_map = np.where(dnbr_img > thresh, 1, 0)
-
-    # save this data
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save as numpy files
-    np.save(os.path.join(output_dir, 'dnbr_normalized.npy'), dnbr_img)
-    np.save(os.path.join(output_dir, 'dnbr_binary_map.npy'), dnbr_map)
-
-    print("Data saved successfully!")
-    print(f"Files saved in '{output_dir}' directory:")
-    print("- dnbr_normalized.npy (NumPy array)")
-    print("- dnbr_binary_map.npy (NumPy array)")
-
-    # Visualize the heatmap and binary map side-by-side
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    
-    # Display dNBR heatmap
-    im1 = ax1.imshow(dnbr_img[:, :, 0], cmap='hot', vmin=0, vmax=1)
-    ax1.set_title('dNBR Heatmap (Normalized)', fontsize=12)
-    ax1.axis('off')
-    plt.colorbar(im1, ax=ax1, fraction=0.046, pad=0.04)
-    
-    # Display binary map
-    im2 = ax2.imshow(dnbr_map[:, :, 0], cmap='gray', vmin=0, vmax=1)
-    ax2.set_title(f'dNBR Binary Map (thresh={thresh})', fontsize=12)
-    ax2.axis('off')
-    plt.colorbar(im2, ax=ax2, fraction=0.046, pad=0.04)
-    
-    plt.tight_layout()
-    plt.show()
-
-    return dnbr_img
-
-# Backward compatibility function
-def extract_data_labels(img_list: list, output_dir: str, thresh: float = 0.6):
-    """Legacy function for backward compatibility - reads images and calculates dNBR"""
-    nbr_imgs = {}
-    profiles = {}
-
-    for i, img_path in enumerate(img_list):
-        nir_swir = read_sent2_1c_bands(img_path, ['B08', 'B12'])
-
-        b08_data = nir_swir['data'][:, :, 0]
-        b08_profile = nir_swir['profile']
-
-        b12_data = nir_swir['data'][:, :, 1]
-
-        denom = b08_data + b12_data
-        denom[denom == 0] = 1e-6
-        # avoid division by zero
-        nbr_img = (b08_data - b12_data) / denom
-
-        nbr_imgs[i] = nbr_img
-        profiles[i] = b08_profile
-
-    # get final dnbr image
-    dnbr_img = nbr_imgs[0] - nbr_imgs[1]
-    
-    # normalize between 0 and 1 to get heatmap of probabilities (?)
-    dnbr_img = (dnbr_img - np.min(dnbr_img)) / (np.max(dnbr_img) - np.min(dnbr_img))
-
-    # Apply NBR masking: set dNBR to 0 where pre-fire 0.7 < NBR < 0.2 (vegetation which is not very humid, so more prone to fires)
-    dnbr_img[nbr_imgs[0] < 0.2] = 0
-    dnbr_img[nbr_imgs[0] > 0.7] = 0
-
-    # Add channel dimension to make it 3D (height, width, 1)
-    dnbr_img = dnbr_img[:, :, np.newaxis]
-
-    # get also the binary map if needed, with a threshold
-    dnbr_map = np.where(dnbr_img > thresh, 1, 0)
-
-    # save this data
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save as numpy files
-    np.save(os.path.join(output_dir, 'dnbr_normalized.npy'), dnbr_img)
-    np.save(os.path.join(output_dir, 'dnbr_binary_map.npy'), dnbr_map)
-
-    print("Data saved successfully!")
-    print(f"Files saved in '{output_dir}' directory:")
-    print("- dnbr_normalized.npy (NumPy array)")
-    print("- dnbr_binary_map.npy (NumPy array)")
-
-    return dnbr_img
-
-
-#--------------------------------------------------------------------------------
-
-# extract the dNBR map (of values between 0 and 1) and the dNBR binary map with NDVI masking
-def extract_labels_ndvi(img_list: list, output_dir: str, thresh: float = 0.6):
-    """
-    Create data labels from Sentinel-2 images by considering the dNBR value with NDVI masking
-    
-    Args:
-        img_list: List of paths to Sentinel-2 Level 1C product directories [pre-fire, post-fire]
-        output_dir: Location where to save the results
-        thresh: threshold of dNBR values to use to create binary map
-    
-    Returns:
-        numpy.ndarray: dNBR normalized image with shape (height, width, 1)
-    """
-    nbr_imgs = {}
-    ndvi_imgs = {}
-    profiles = {}
-
-    for i, img_path in enumerate(img_list):
-        # Read bands needed for both NBR and NDVI calculations
-        bands_data = read_sent2_1c_bands(img_path, ['B08', 'B12', 'B04'])
-
-        # Extract B08 (NIR), B12 (SWIR), and B04 (Red) data
-        band_order = bands_data['band_order']
-        
-        try:
-            b08_idx = next(idx for idx, name in band_order.items() if name == 'B08')
-            b12_idx = next(idx for idx, name in band_order.items() if name == 'B12')
-            b04_idx = next(idx for idx, name in band_order.items() if name == 'B04')
-        except StopIteration:
-            raise ValueError("B08 (NIR), B12 (SWIR), or B04 (Red) bands not found in the provided bands data")
-
-        b08_data = bands_data['data'][:, :, b08_idx]
-        b12_data = bands_data['data'][:, :, b12_idx]
-        b04_data = bands_data['data'][:, :, b04_idx]
-        b08_profile = bands_data['profile']
-
-        # Calculate NBR
-        denom_nbr = b08_data + b12_data
-        denom_nbr[denom_nbr == 0] = 1e-6
-        nbr_img = (b08_data - b12_data) / denom_nbr
-
-        # Calculate NDVI
-        denom_ndvi = b08_data + b04_data
-        denom_ndvi[denom_ndvi == 0] = 1e-6
-        ndvi_img = (b08_data - b04_data) / denom_ndvi
-
-        nbr_imgs[i] = nbr_img
-        ndvi_imgs[i] = ndvi_img
-        profiles[i] = b08_profile
-
-    # get final dnbr image
-    dnbr_img = nbr_imgs[0] - nbr_imgs[1]
-    
-    # normalize between 0 and 1 to get heatmap of probabilities (?)
-    dnbr_img = (dnbr_img - np.min(dnbr_img)) / (np.max(dnbr_img) - np.min(dnbr_img))
-
-    # Apply NDVI masking: set dNBR to 0 where pre-fire NDVI < 0.2 or NDVI > 0.7 (same thresholds as NBR)
-    dnbr_img[ndvi_imgs[0] < 0.2] = 0
-    dnbr_img[ndvi_imgs[0] > 0.7] = 0
-
-    # Add channel dimension to make it 3D (height, width, 1)
-    dnbr_img = dnbr_img[:, :, np.newaxis]
-
-    # get also the binary map if needed, with a threshold
-    dnbr_map = np.where(dnbr_img > thresh, 1, 0)
-
-    # save this data
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save as numpy files
-    np.save(os.path.join(output_dir, 'dnbr_normalized_ndvi_masked.npy'), dnbr_img)
-    np.save(os.path.join(output_dir, 'dnbr_binary_map_ndvi_masked.npy'), dnbr_map)
-
-    print("Data saved successfully!")
-    print(f"Files saved in '{output_dir}' directory:")
-    print("- dnbr_normalized_ndvi_masked.npy (NumPy array)")
-    print("- dnbr_binary_map_ndvi_masked.npy (NumPy array)")
-
-
-    return dnbr_img
-
-
-#--------------------------------------------------------------------------------
-
-# extract the dNBR map (of values between 0 and 1) and the dNBR binary map with NDVI masking from pre-extracted bands
-def extract_labels_ndvi_from_bands(pre_bands_data, post_bands_data, output_dir: str, thresh: float = 0.6):
-    """
-    Create data labels from pre-extracted bands data by considering the dNBR value with NDVI masking
-    
-    Args:
-        pre_bands_data: Dictionary from read_sentinel2_bands for pre-fire data
-        post_bands_data: Dictionary from read_sentinel2_bands for post-fire data
-        output_dir: Location where to save the results
-        thresh: threshold of dNBR values to use to create binary map
-    
-    Returns:
-        numpy.ndarray: dNBR normalized image with shape (height, width, 1)
-    """
-    
-    nbr_imgs = {}
-    ndvi_imgs = {}
-    
-    # Process both datasets
-    for i, bands_data in enumerate([pre_bands_data, post_bands_data]):
-        band_order = bands_data['band_order']
-        
-        # Find B08 (NIR), B12 (SWIR), and B04 (Red) indices
-        try:
-            b08_idx = next(idx for idx, name in band_order.items() if name == 'B08')
-            b12_idx = next(idx for idx, name in band_order.items() if name == 'B12')
-            b04_idx = next(idx for idx, name in band_order.items() if name == 'B04')
-        except StopIteration:
-            raise ValueError("B08 (NIR), B12 (SWIR), or B04 (Red) bands not found in the provided bands data")
-        
-        b08_data = bands_data['data'][:, :, b08_idx]
-        b12_data = bands_data['data'][:, :, b12_idx]
-        b04_data = bands_data['data'][:, :, b04_idx]
-
-        # Calculate NBR
-        denom_nbr = b08_data + b12_data
-        denom_nbr[denom_nbr == 0] = 1e-6
-        nbr_img = (b08_data - b12_data) / denom_nbr
-
-        # Calculate NDVI
-        denom_ndvi = b08_data + b04_data
-        denom_ndvi[denom_ndvi == 0] = 1e-6
-        ndvi_img = (b08_data - b04_data) / denom_ndvi
-
-        nbr_imgs[i] = nbr_img
-        ndvi_imgs[i] = ndvi_img
-
-    # get final dnbr image
-    dnbr_img = nbr_imgs[0] - nbr_imgs[1]
-    
-    # normalize between 0 and 1 to get heatmap of probabilities (?)
-    dnbr_img = (dnbr_img - np.min(dnbr_img)) / (np.max(dnbr_img) - np.min(dnbr_img))
-
-    # Apply NDVI masking: set dNBR to 0 where pre-fire NDVI < 0.2 or NDVI > 0.7 (same thresholds as NBR)
-    dnbr_img[ndvi_imgs[0] < 0.2] = 0
-    dnbr_img[ndvi_imgs[0] > 0.7] = 0
-    
-    # Add channel dimension to make it 3D (height, width, 1)
-    dnbr_img = dnbr_img[:, :, np.newaxis]
-
-    # get also the binary map if needed, with a threshold
-    dnbr_map = np.where(dnbr_img > thresh, 1, 0)
-
-    # save this data
-    os.makedirs(output_dir, exist_ok=True)
-
-    # Save as numpy files
-    np.save(os.path.join(output_dir, 'dnbr_normalized_ndvi_masked.npy'), dnbr_img)
-    np.save(os.path.join(output_dir, 'dnbr_binary_map_ndvi_masked.npy'), dnbr_map)
-
-    print("Data saved successfully!")
-    print(f"Files saved in '{output_dir}' directory:")
-    print("- dnbr_normalized_ndvi_masked.npy (NumPy array)")
-    print("- dnbr_binary_map_ndvi_masked.npy (NumPy array)")
-
-    return dnbr_img
-
-
-#--------------------------------------------------------------------------------
-
-# Utility functions to process entire directories of tilees
-# Updated function to process directories of tilees and add vegetation indices as additional channels
-def process_tilees_directory_with_indices(tilees_dir: str, band_names: list, output_dir: str, indices: list = ['ndvi', 'ndmi']):
+# function to process full directories of tiles and add vegetation indices as additional channels
+def process_tiles_directory_with_indices(tiles_dir: str, band_names: list, indices: list = ['ndvi', 'ndmi']):
     """
     Process all .npy tile files in a directory to add vegetation indices as additional channels
     
     Args:
-        tilees_dir (str): Directory containing .npy tile files
-        band_names (list): List of band names in order they appear in tilees
-        output_dir (str): Directory to save expanded tilees
+        tiles_dir (str): Directory containing .npy tile files
+        band_names (list): List of band names in order they appear in tiles
         indices (list): List of indices to compute ('ndvi' and/or 'ndmi')
     
     Returns:
         list: List of paths to saved expanded tile files
         list: Updated band names including the new indices
     """
-    # Find all .npy files in the tilees directory
-    tile_files = glob.glob(os.path.join(tilees_dir, '*.npy'))
+    # Find all .npy files in the tiles directory
+    tile_files = glob.glob(os.path.join(tiles_dir, '*.npy'))
     
     if not tile_files:
-        print(f"No .npy files found in {tilees_dir}")
+        print(f"No .npy files found in {tiles_dir}")
         return [], band_names
     
-    print(f"Processing {len(tile_files)} tilees to add {', '.join([idx.upper() for idx in indices])} as additional channels...")
+    print(f"Processing {len(tile_files)} tiles to add {', '.join([idx.upper() for idx in indices])} as additional channels...")
     
     saved_paths = []
     updated_band_names = None
     
     for tile_file in tile_files:
         try:
-            output_path, current_band_names = save_tile(tile_file, band_names, output_dir, indices)
-            saved_paths.append(output_path)
+            _, current_band_names = compute_veg_indices(tile_file, band_names, indices)
+            saved_paths.append(tile_file)
             if updated_band_names is None:
                 updated_band_names = current_band_names
         except Exception as e:
             print(f"Error processing {tile_file}: {e}")
     
-    print(f"Successfully processed {len(saved_paths)} tilees with expanded channels")
+    print(f"Successfully processed {len(saved_paths)} tiles with expanded channels")
     if updated_band_names:
         print(f"Original channels: {len(band_names)}, Final channels: {len(updated_band_names)}")
         print(f"Added indices: {[name for name in updated_band_names if name not in band_names]}")
     
     return saved_paths, updated_band_names if updated_band_names else band_names
-
-
-# Legacy function for backward compatibility - processes individual index types
-def process_tilees_directory(tilees_dir: str, band_names: list, output_dir: str, index_type: str = 'ndvi'):
-    """
-    Legacy function: Process all .npy tile files in a directory to compute individual vegetation indices
-    
-    Args:
-        tilees_dir (str): Directory containing .npy tile files
-        band_names (list): List of band names in order they appear in tilees
-        output_dir (str): Directory to save index tilees
-        index_type (str): Type of index to compute ('ndvi' or 'ndmi')
-    
-    Returns:
-        list: List of paths to saved index tile files
-    """
-    # Find all .npy files in the tilees directory
-    tile_files = glob.glob(os.path.join(tilees_dir, '*.npy'))
-    
-    if not tile_files:
-        print(f"No .npy files found in {tilees_dir}")
-        return []
-    
-    print(f"Processing {len(tile_files)} tilees for {index_type.upper()} computation...")
-    
-    saved_paths = []
-    for tile_file in tile_files:
-        try:
-            # Use the new function but save only the specific index
-            expanded_tile, updated_band_names = compute_veg_indices(tile_file, band_names, [index_type])
-            
-            # Extract only the computed index (last channel)
-            if index_type.upper() in updated_band_names:
-                index_channel = updated_band_names.index(index_type.upper())
-                index_data = expanded_tile[:, :, index_channel:index_channel+1]
-                
-                # Save as separate file
-                os.makedirs(output_dir, exist_ok=True)
-                input_filename = os.path.basename(tile_file)
-                output_filename = input_filename.replace('_tile_', f'_{index_type.lower()}_')
-                output_path = os.path.join(output_dir, output_filename)
-                np.save(output_path, index_data)
-                saved_paths.append(output_path)
-        except Exception as e:
-            print(f"Error processing {tile_file}: {e}")
-    
-    print(f"Successfully processed {len(saved_paths)} tilees for {index_type.upper()}")
-    return saved_paths
-
-
