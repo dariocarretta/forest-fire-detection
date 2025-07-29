@@ -14,11 +14,11 @@ import pickle
 
 
 # Updated paths for unified data structure
-input_data_path = '/home/dario/Desktop/FlameSentinels/PATCHES_INPUT_DATA'
-labels_path = '/home/dario/Desktop/FlameSentinels/PATCHES_LABELS'
+input_data_path = '/home/dario/Desktop/FlameSentinels/TILES_INPUT_DATA'
+labels_path = '/home/dario/Desktop/FlameSentinels/TILES_LABELS'
 
 # Load unified input data (contains bands + NDVI + NDMI)
-print("Loading unified input data from PATCHES_INPUT_DATA...")
+print("Loading unified input data from TILES_INPUT_DATA...")
 input_files = sorted(glob.glob(os.path.join(input_data_path, '*.npy')))
 label_files = sorted(glob.glob(os.path.join(labels_path, '*.npy')))
 
@@ -261,16 +261,16 @@ def train_model(model, train_loader, val_loader, criterion, optimizer, device, e
     print("\nTraining completed!")
     return model
 
-# unet_model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
-#    in_channels=7, out_channels=1, init_features=32, pretrained=False)
+unet_model = torch.hub.load('mateuszbuda/brain-segmentation-pytorch', 'unet',
+    in_channels=7, out_channels=1, init_features=32, pretrained=False)
 
 # optimizer & loss definition
-# optimizer = torch.optim.Adam(unet_model.parameters(), lr=0.001)
+optimizer = torch.optim.Adam(unet_model.parameters(), lr=0.001)
 criterion = nn.L1Loss()
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 
-# trained_model = train_model(unet_model, train_loader, val_loader, criterion, optimizer, device, 25)
+trained_model = train_model(unet_model, train_loader, val_loader, criterion, optimizer, device, 25)
 
 
 # Visualize model predictions on validation set
@@ -503,8 +503,8 @@ def test_model_on_dataset(model, test_dataset_name='test'):
     # Define test data paths - multiple possible locations
     possible_paths = [
         # Option 1: Test data in main directory
-        (f'/home/dario/Desktop/FlameSentinels/TEST_INPUT_DATA',
-         f'/home/dario/Desktop/FlameSentinels/TEST_LABELS'),
+        (f'/home/dario/Desktop/FlameSentinels/CHILE_INPUT',
+         f'/home/dario/Desktop/FlameSentinels/CHILE_LABELS'),
         
         # Option 2: Test data in dataset-specific subfolder
         (f'/home/dario/Desktop/FlameSentinels/{test_dataset_name}_data/TEST_INPUT_DATA',
@@ -613,14 +613,13 @@ def load_trained_model(model_path='/home/dario/Desktop/FlameSentinels/best_predi
 # Example usage - uncomment and modify as needed:
 
 # Option 1: Test with the currently trained model variable
-# test_results = test_model_on_dataset(trained_model, 'greece')
+test_results = test_model_on_dataset(trained_model, 'greece')
 
 # Option 2: Test with a loaded model from file
-loaded_model = load_trained_model()
+# loaded_model = load_trained_model()
 # if loaded_model:
 #     test_results = test_model_on_dataset(loaded_model, 'turkey')
 #     test_results = test_model_on_dataset(loaded_model, 'spain')
 
 # Option 3: Test with the loaded model from validation section
 # test_results = test_model_on_dataset(unet_model, 'greece')
-

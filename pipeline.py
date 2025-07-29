@@ -30,9 +30,7 @@ def full_sentinel2_data_pipeline(dataset_name: str,
     full_img_path = os.path.join(base_path, f'{dataset_name}_full_img_results')
     
     # Output patch directories
-    tiles_bands_path = os.path.join(base_path, 'TILES_BANDS')
-    tiles_ndvi_path = os.path.join(base_path, 'TILES_NDVI') 
-    tiles_ndmi_path = os.path.join(base_path, 'TILES_NDMI')
+    tiles_input_path = os.path.join(base_path, 'TILES_INPUT_DATA')
     tiles_labels_path = os.path.join(base_path, 'TILES_LABELS')
     
     # Step 1: Extract data from folder and read all 13 bands
@@ -41,7 +39,7 @@ def full_sentinel2_data_pipeline(dataset_name: str,
     print("Reading pre-fire bands...")
     pre_bands = read_sent2_1c_bands(f'{dataset_name}_pre', all_bands)
     print("Reading post-fire bands...")
-    post_bands = read_sent2_1c_bands(f'{dataset_name}_post', ['B04', 'B08', 'B11', 'B12'])
+    post_bands = read_sent2_1c_bands(f'{dataset_name}_post', ['B04', 'B08', 'B8A', 'B12'])
     
     # Print information about the result
     print("Band names:", pre_bands['band_names'])
@@ -53,7 +51,7 @@ def full_sentinel2_data_pipeline(dataset_name: str,
     # Step 2: Create label map (dNBR) with NDVI masking
     print("\n--- Step 2: Creating label map (dNBR with NDVI masking) ---")
     os.makedirs(full_img_path, exist_ok=True)
-    extract_labels_ndvi_from_bands(pre_bands, post_bands, full_img_path, threshold)
+    extract_data_labels_from_bands(pre_bands, post_bands, full_img_path, threshold)
     print("✓ dNBR label map with NDVI masking created")
 
     
@@ -62,18 +60,18 @@ def full_sentinel2_data_pipeline(dataset_name: str,
     print("\n--- Step 3: Extracting tiles (256, 256, 13) ---")
     bands_data = pre_bands['data']  # Use pre-fire data for tiles
     num_bands = len(all_bands)
-    extract_tiles_with_padding(bands_data, dataset_name, (*patch_size, num_bands), tiles_bands_path)
+    extract_tiles_with_padding(bands_data, dataset_name, (*patch_size, num_bands), tiles_input_path)
     
     # Also extract label tiles
-    dnbr_normmap = np.load(os.path.join(full_img_path, 'dnbr_normalized_ndvi_masked.npy'))
+    dnbr_normmap = np.load(os.path.join(full_img_path, 'dnbr_normalized.npy'))
     extract_tiles_with_padding(dnbr_normmap, dataset_name, (*patch_size, 1), tiles_labels_path)
-    print(f"✓ tiles extracted to {tiles_bands_path}")
+    print(f"✓ tiles extracted to {tiles_input_path}")
     
     """
     # Step 4: Apply cloud detection function
     print("\n--- Step 4: Applying cloud detection ---")
     print(f"Using S2PixelCloudDetector with threshold: {cloud_threshold}")
-    cloud_results = patch_cloud_detection(tiles_bands_path, cloud_threshold)
+    cloud_results = patch_cloud_detection(tiles_input_path, cloud_threshold)
     if cloud_results is not None:
         visualize_patch_results(cloud_results)
         print(f"✓ Cloud detection completed. Clean tiles: {cloud_results['clean_tiles']}, Cloudy tiles moved: {cloud_results['cloudy_tiles']}")
@@ -88,7 +86,7 @@ def full_sentinel2_data_pipeline(dataset_name: str,
     # - Apply a vegetation threshold (e.g., minimum 30% vegetation coverage)
     # - Move tiles with insufficient vegetation to a separate folder (e.g., "LOW_VEGETATION_tiles")
     # - Return statistics similar to cloud detection results
-    # Example function call: vegetation_results = patch_vegetation_detection(tiles_bands_path, vegetation_threshold=0.3)
+    # Example function call: vegetation_results = patch_vegetation_detection(tiles_input_path, vegetation_threshold=0.3)
 
     # Step 6: Placeholder for black pixel filtering
     # TODO: Implement filtering for black tiles (0 or smth like that for all rgb values)
@@ -99,7 +97,7 @@ def full_sentinel2_data_pipeline(dataset_name: str,
     print("\n--- Step 6: Extracting NDVI and NDMI for remaining clean tiles ---")
     
     # Process remaining tiles in the tiles_BANDS folder (after cloud filtering)
-    remaining_patch_files = [f for f in os.listdir(tiles_bands_path) if f.endswith('.npy')]
+    remaining_patch_files = [f for f in os.listdir(tiles_input_path) if f.endswith('.npy')]
     
     if remaining_patch_files:
         print(f"Processing {len(remaining_patch_files)} remaining clean tiles...")
@@ -107,23 +105,17 @@ def full_sentinel2_data_pipeline(dataset_name: str,
         # Get band names for vegetation index computation
         band_names = pre_bands['band_names']
         
-        # Process NDVI tiles
-        process_tiles_directory(tiles_bands_path, band_names, tiles_ndvi_path, index_type='ndvi')
-        print(f"✓ NDVI tiles saved to {tiles_ndvi_path}")
-        
-        # Process NDMI tiles  
-        process_tiles_directory(tiles_bands_path, band_names, tiles_ndmi_path, index_type='ndmi')
-        print(f"✓ NDMI tiles saved to {tiles_ndmi_path}")
-        
+        # Process NDVI & NDMI tiles
+        process_tiles_directory_with_indices(tiles_input_path, band_names)
+        print(f"✓ NDVI & NDMI values added to the tiles in {tiles_input_path}")
+
     else:
         print("⚠ No clean tiles remaining after cloud detection!")
     
     # Step 8: Print folder locations
     print(f"\n=== Processing pipeline completed for dataset: {dataset_name} ===")
     print("📁 OUTPUT FOLDER LOCATIONS:")
-    print(f"  🔸 Clean bands tiles (13 bands): {tiles_bands_path}")
-    print(f"  🔸 NDVI tiles: {tiles_ndvi_path}")
-    print(f"  🔸 NDMI tiles: {tiles_ndmi_path}")
+    print(f"  🔸 Clean bands tiles +  indices (15 bands): {tiles_input_path}")
     print(f"  🔸 Label tiles (dNBR): {tiles_labels_path}")
 
     #if cloud_results:
@@ -154,9 +146,7 @@ def full_sentinel2_data_pipeline(dataset_name: str,
 
     return {
         'dataset_name': dataset_name,
-        'bands_tiles': tiles_bands_path,
-        'ndvi_tiles': tiles_ndvi_path,
-        'ndmi_tiles': tiles_ndmi_path,
+        'bands_tiles': tiles_input_path,
         'label_tiles': tiles_labels_path,
         'full_img_results': full_img_path,
         #'cloud_results': cloud_results

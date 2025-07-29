@@ -190,7 +190,7 @@ def read_sent2_1c_bands(base_path: str,
     
     if needs_resampling:
         print(f"Multiple resolutions detected. Resampling all bands to {target_resolution}m")
-        result = resampling_bands(bands_data, band_native_resolutions, reference_profile, target_resolution)
+        result = resampling_bands(bands_data, reference_profile, target_resolution)
     else:
         # no resampling needed - stack bands directly
         for band_name, band_info in bands_data.items():
@@ -276,7 +276,7 @@ def extract_data_labels_from_bands(pre_bands_data, post_bands_data, output_dir: 
         
         # Find B09 (NIR), B12 (SWIR)
         try:
-            b09_idx = next(idx for idx, name in band_order.items() if name == 'B09')
+            b8a_idx = next(idx for idx, name in band_order.items() if name == 'B8A')
             b12_idx = next(idx for idx, name in band_order.items() if name == 'B12')
             # if applying masking, find indices for ndvi
             if masking:
@@ -285,13 +285,13 @@ def extract_data_labels_from_bands(pre_bands_data, post_bands_data, output_dir: 
         except StopIteration:
             raise ValueError("Some bands not found in the provided bands data")
         
-        b09_data = bands_data['data'][:, :, b09_idx]
+        b8a_data = bands_data['data'][:, :, b8a_idx]
         b12_data = bands_data['data'][:, :, b12_idx]
 
         # Calculate NBR
-        denom_nbr = b09_data + b12_data
+        denom_nbr = b8a_data + b12_data
         denom_nbr[denom_nbr == 0] = 1e-6
-        nbr_img = (b09_data - b12_data) / denom_nbr
+        nbr_img = (b8a_data - b12_data) / denom_nbr
         nbr_imgs[i] = nbr_img
 
         if masking:
@@ -426,8 +426,6 @@ def compute_veg_indices(tile_path: str, band_names: list, indices: list = ['ndvi
         index_data = index_data[:, :, np.newaxis]
         expanded_tile = np.concatenate([expanded_tile, index_data], axis=2)
         updated_band_names.append(index_type.upper())
-        
-        print(f"Added {index_type.upper()} as channel {len(updated_band_names)}")
 
     del tile_data # free up ram space
     

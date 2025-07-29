@@ -1,6 +1,9 @@
-DATASETS
-DATASETS_2A
+DATASETS*
 sample_data
 TILES_INPUT_DATA
 TILES_LABELS
 *_full_img_results
+*_LABELS
+*_INPUT
+*_IMGS
+__pycache__

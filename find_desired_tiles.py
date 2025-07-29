@@ -4,7 +4,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-SOURCE_DIR = '/home/dario/Desktop/FlameSentinels/sample_data/PATCHES_LABELS'
+SOURCE_DIR = '/home/dario/Desktop/FlameSentinels/sample_data/TILES_LABELS'
 
 tiles = glob.glob(os.path.join(SOURCE_DIR, '*.npy'))
 
@@ -15,6 +15,7 @@ top5_paths = {}
 for tilepath in tiles:
 
     tile = np.load(tilepath)
+    print(tile.shape)
     topval = np.mean(tile)
     print(topval)
 
@@ -23,6 +24,8 @@ for tilepath in tiles:
     if topval > min(top5_vals):
         top5_vals[minidx] = topval
         top5_paths[minidx] = tilepath
+
+    break
 
 
 print(top5_paths.values())
