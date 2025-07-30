@@ -2,6 +2,7 @@ import os
 import numpy as np
 from PIL import Image
 import glob
+import matplotlib.cm as cm
 
 def extract_rgb_channels(input_folder, output_folder):
     """
@@ -103,4 +104,43 @@ def main():
     print("RGB extraction completed!")
 
 if __name__ == "__main__":
-    main()
+    #main()
+
+    input_folder = '/home/dario/Desktop/FlameSentinels/TEST_LABELS'
+    output_folder = '/home/dario/Desktop/FlameSentinels/TEST_LABELS_IMGS'
+    
+    if not os.path.exists(input_folder):
+        print(f"Input folder {input_folder} does not exist!")
+        exit()
+    
+    input_files = glob.glob(os.path.join(input_folder, '*.npy'))
+
+    for filepath in input_files:
+
+        filename = os.path.splitext(os.path.basename(filepath))[0]
+
+        img = np.load(filepath)
+        
+        # Squeeze to remove any single dimensions and ensure 2D array
+        if len(img.shape) == 3 and img.shape[2] == 1:
+            img = img.squeeze(axis=2)  # Remove the last dimension if it's 1
+        elif len(img.shape) > 2:
+            img = img.squeeze()  # Remove all single dimensions
+        
+        # Ensure values are in 0-1 range for colormap
+        if img.max() > 1.0:
+            img = img / img.max()  # Normalize to 0-1 range
+        
+        colormap = cm.get_cmap('coolwarm')  # Blue to red colormap
+        colored_pred = colormap(img)  # This returns (height, width, 4) - RGBA
+        
+        # Convert to uint8 (0-255) and remove alpha channel
+        colored_pred_uint8 = (colored_pred[:, :, :3] * 255).astype(np.uint8)
+        img = Image.fromarray(colored_pred_uint8, mode='RGB')
+        
+        output_path = os.path.join(output_folder, f"{filename}.png")
+        img.save(output_path)
+            
+        print(f"Saved: {output_path}")
+
+    print("RGB extraction completed!")

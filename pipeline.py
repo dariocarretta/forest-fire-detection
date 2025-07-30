@@ -68,6 +68,9 @@ def full_sentinel2_data_pipeline(dataset_name: str,
     dnbr_normmap = np.load(os.path.join(full_img_path, 'dnbr_normalized.npy'))
     extract_tiles_with_padding(dnbr_normmap, dataset_name, (*patch_size, 1), tiles_labels_path)
     print(f"✓ tiles extracted to {tiles_input_path}")
+
+
+    # TODO: put band info and profile info into the tiles folder
     
     """
     # Step 4: Apply cloud detection function
