@@ -38,6 +38,8 @@ def full_sentinel2_data_pipeline(dataset_name: str,
     all_bands = ['B01', 'B02', 'B03', 'B04', 'B05', 'B06', 'B07', 'B08', 'B8A', 'B09', 'B10', 'B11', 'B12']
     print("Reading pre-fire bands...")
     pre_bands = read_sent2_1c_bands(f'{dataset_name}_pre', all_bands)
+    # saving geospatial profile & band info for later
+    save_data_profile(pre_bands, full_img_path, dataset_name, save_data=False)
     print("Reading post-fire bands...")
     post_bands = read_sent2_1c_bands(f'{dataset_name}_post', ['B04', 'B08', 'B8A', 'B12'])
     

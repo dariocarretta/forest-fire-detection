@@ -219,7 +219,7 @@ def read_sent2_1c_bands(base_path: str,
 #--------------------------------------------------------------------------------
 
 # saving data and profile info
-def save_data_profile(bands_data, path:str, name:str):
+def save_data_profile(bands_data, path:str, name:str, save_data:bool = True):
     """
     Save the stacked bands data and profile
     
@@ -229,10 +229,10 @@ def save_data_profile(bands_data, path:str, name:str):
         name (str): Base name for the files
     """
     os.makedirs(path, exist_ok=True)
-    
-    # save the stacked bands data
-    np.save(os.path.join(path, f'{name}.npy'), bands_data['data'])
-    
+    if save_data == True:
+        # save the stacked bands data
+        np.save(os.path.join(path, f'{name}_bands.npy'), bands_data['data'])
+        
     # save the profile for the metadata (location etc.)
     with open(os.path.join(path, f'{name}_geospatial_profile.pkl'), 'wb') as f:
         pickle.dump(bands_data['profile'], f)
@@ -247,7 +247,7 @@ def save_data_profile(bands_data, path:str, name:str):
             band_info['resampling_info'] = bands_data['resampling_info']
         pickle.dump(band_info, f)
 
-    return os.path.join(path, f'{name}.npy')
+    return os.path.join(path, f'{name}_geospatial_profile.pkl')
 
 #--------------------------------------------------------------------------------
 
