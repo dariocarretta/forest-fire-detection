@@ -274,24 +274,23 @@ def extract_data_labels_from_bands(pre_bands_data, post_bands_data, output_dir: 
     for i, bands_data in enumerate([pre_bands_data, post_bands_data]):
         band_order = bands_data['band_order']
         
-        # Find B09 (NIR), B12 (SWIR)
+        # Find B08 (NIR), B12 (SWIR)
         try:
-            b8a_idx = next(idx for idx, name in band_order.items() if name == 'B8A')
+            b08_idx = next(idx for idx, name in band_order.items() if name == 'B08')
             b12_idx = next(idx for idx, name in band_order.items() if name == 'B12')
             # if applying masking, find indices for ndvi
             if masking:
                 b04_idx = next(idx for idx, name in band_order.items() if name == 'B04')
-                b08_idx = next(idx for idx, name in band_order.items() if name == 'B08')
         except StopIteration:
             raise ValueError("Some bands not found in the provided bands data")
         
-        b8a_data = bands_data['data'][:, :, b8a_idx]
+        b08_data = bands_data['data'][:, :, b08_idx]
         b12_data = bands_data['data'][:, :, b12_idx]
 
         # Calculate NBR
-        denom_nbr = b8a_data + b12_data
+        denom_nbr = b08_data + b12_data
         denom_nbr[denom_nbr == 0] = 1e-6
-        nbr_img = (b8a_data - b12_data) / denom_nbr
+        nbr_img = (b08_data - b12_data) / denom_nbr
         nbr_imgs[i] = nbr_img
 
         if masking:
