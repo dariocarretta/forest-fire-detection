@@ -93,8 +93,8 @@ def extract_rgb_channels(input_folder, output_folder):
 
 def main():
     # Example usage
-    input_folder = '/home/dario/Desktop/FlameSentinels/CHILE_INPUT'
-    output_folder = '/home/dario/Desktop/FlameSentinels/CHILE_IMGS'
+    input_folder = '/home/dario/Desktop/FlameSentinels/TILES_INPUT_DATA'
+    output_folder = '/home/dario/Desktop/FlameSentinels/TILES_IMGS'
     
     if not os.path.exists(input_folder):
         print(f"Input folder {input_folder} does not exist!")
@@ -104,8 +104,8 @@ def main():
     print("RGB extraction completed!")
 
 if __name__ == "__main__":
-    #main()
-
+    main()
+    """
     input_folder = '/home/dario/Desktop/FlameSentinels/TEST_LABELS'
     output_folder = '/home/dario/Desktop/FlameSentinels/TEST_LABELS_IMGS'
     
@@ -144,3 +144,4 @@ if __name__ == "__main__":
         print(f"Saved: {output_path}")
 
     print("RGB extraction completed!")
+    """
